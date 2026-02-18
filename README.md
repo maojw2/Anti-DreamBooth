@@ -137,7 +137,16 @@ bash scripts/train_dreambooth_alone.sh
 
 Inference: generates examples with multiple-prompts
 ```
-python infer.py --model_path <path to DREAMBOOTH model>/checkpoint-1000 --output_dir ./test-infer/
+# Stable Diffusion family (default)
+python infer.py --model_family sd --model_path <path to DREAMBOOTH model>/checkpoint-1000 --output_dir ./test-infer/
+
+# Flux family
+python infer.py --model_family flux --model_path <path to FLUX model> --output_dir ./test-infer-flux/ --num_inference_steps 50 --guidance_scale 3.5
+```
+
+Flux example script:
+```
+bash scripts/infer_flux.sh
 ```
 
 ## Contacts

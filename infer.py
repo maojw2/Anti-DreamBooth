@@ -2,7 +2,7 @@ import argparse
 import os
 
 import torch
-from diffusers import StableDiffusionPipeline
+from diffusers import DiffusionPipeline, StableDiffusionPipeline
 
 
 parser = argparse.ArgumentParser(description="Inference")
@@ -19,8 +19,50 @@ parser.add_argument(
     default="./test-infer/",
     help="The output directory where predictions are saved",
 )
+parser.add_argument(
+    "--model_family",
+    type=str,
+    choices=["sd", "flux"],
+    default="sd",
+    help="Model family to use for inference.",
+)
+parser.add_argument(
+    "--num_inference_steps",
+    type=int,
+    default=100,
+    help="Number of denoising steps.",
+)
+parser.add_argument(
+    "--guidance_scale",
+    type=float,
+    default=7.5,
+    help="Classifier-free guidance scale.",
+)
 
 args = parser.parse_args()
+
+
+def load_pipeline(model_path: str, model_family: str):
+    load_kwargs = {
+        "torch_dtype": torch.float16,
+        "local_files_only": True,
+    }
+
+    if model_family == "sd":
+        return StableDiffusionPipeline.from_pretrained(
+            model_path,
+            safety_checker=None,
+            **load_kwargs,
+        ).to("cuda")
+
+    if model_family == "flux":
+        return DiffusionPipeline.from_pretrained(
+            model_path,
+            **load_kwargs,
+        ).to("cuda")
+
+    raise ValueError(f"Unsupported model_family: {model_family}")
+
 
 if __name__ == "__main__":
     os.makedirs(args.output_dir, exist_ok=True)
@@ -35,12 +77,7 @@ if __name__ == "__main__":
     ]
 
     # create & load model
-    pipe = StableDiffusionPipeline.from_pretrained(
-        args.model_path,
-        torch_dtype=torch.float16,
-        safety_checker=None,
-        local_files_only=True,
-    ).to("cuda")
+    pipe = load_pipeline(args.model_path, args.model_family)
 
     for prompt in prompts:
         print(">>>>>>", prompt)
@@ -48,7 +85,11 @@ if __name__ == "__main__":
         out_path = f"{args.output_dir}/{norm_prompt}"
         os.makedirs(out_path, exist_ok=True)
         for i in range(2):
-            images = pipe([prompt] * 8, num_inference_steps=100, guidance_scale=7.5).images
+            images = pipe(
+                [prompt] * 8,
+                num_inference_steps=args.num_inference_steps,
+                guidance_scale=args.guidance_scale,
+            ).images
             for idx, image in enumerate(images):
                 image.save(f"{out_path}/{i}_{idx}.png")
     del pipe
