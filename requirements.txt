@@ -4,6 +4,7 @@ xformers==0.0.16
 transformers==4.26.0
 datasets==2.10.1
 accelerate==0.16.0
+huggingface_hub<0.26.0
 ftfy
 tensorboard
 Jinja2
