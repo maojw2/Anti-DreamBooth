@@ -2,6 +2,7 @@ import argparse
 import os
 
 import torch
+import diffusers
 from diffusers import DiffusionPipeline, StableDiffusionPipeline
 
 
@@ -42,6 +43,17 @@ parser.add_argument(
 args = parser.parse_args()
 
 
+
+
+def _version_tuple(version: str):
+    core = version.split("+")[0]
+    parts = []
+    for item in core.split("."):
+        digits = "".join(ch for ch in item if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
 def load_pipeline(model_path: str, model_family: str):
     load_kwargs = {
         "torch_dtype": torch.float16,
@@ -56,6 +68,13 @@ def load_pipeline(model_path: str, model_family: str):
         ).to("cuda")
 
     if model_family == "flux":
+        if _version_tuple(diffusers.__version__) < (0, 30, 0):
+            raise RuntimeError(
+                "Flux inference requires diffusers>=0.30.0 because older versions do not provide FluxPipeline. "
+                f"Current diffusers version: {diffusers.__version__}. "
+                "Please run: pip install -U 'diffusers>=0.30.0'"
+            )
+
         return DiffusionPipeline.from_pretrained(
             model_path,
             **load_kwargs,

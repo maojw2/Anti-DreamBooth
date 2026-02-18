@@ -151,7 +151,10 @@ bash scripts/infer_flux.sh
 
 Troubleshooting for Flux inference:
 ```
-# Fix diffusers==0.13.1 compatibility issue (ImportError: cached_download)
+# Flux pipeline class is only available in newer diffusers versions
+pip install -U "diffusers>=0.30.0"
+
+# If you keep old diffusers for SD training code, pin hub for old stack compatibility
 pip install "huggingface_hub<0.26.0"
 
 # If using gated FLUX.1-dev, login and ensure your account has model access
