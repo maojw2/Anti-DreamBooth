@@ -135,6 +135,52 @@ If you want to train a DreamBooth model from your own data, whether it is clean 
 bash scripts/train_dreambooth_alone.sh
 ```
 
+FLUX DreamBooth LoRA training program (wrapper around the official diffusers FLUX trainer):
+```bash
+bash scripts/train_flux_dreambooth_lora.sh
+```
+
+Or run it directly:
+```bash
+python train_flux_dreambooth_lora.py \
+  --train_script diffusers/examples/dreambooth/train_dreambooth_lora_flux.py \
+  --pretrained_model_name_or_path stable-diffusion/flux-dev \
+  --instance_data_dir data/n000050/ \
+  --output_dir flux-dreambooth-outputs/n000050/ \
+  --instance_prompt "a photo of sks person"
+```
+
+> Note: `train_flux_dreambooth_lora.py` launches the upstream script `train_dreambooth_lora_flux.py` via `accelerate`.
+
+Or run the Stable Diffusion training command directly:
+```bash
+accelerate launch train_dreambooth.py \
+  --pretrained_model_name_or_path=stable-diffusion/stable-diffusion-2-1-base \
+  --enable_xformers_memory_efficient_attention \
+  --train_text_encoder \
+  --instance_data_dir=data/n000050/ \
+  --class_data_dir=data/class-person \
+  --output_dir=dreambooth-outputs/n000050/ \
+  --with_prior_preservation \
+  --prior_loss_weight=1.0 \
+  --instance_prompt="a photo of sks person" \
+  --class_prompt="a photo of person" \
+  --inference_prompt="a photo of sks person;a DSLR portrait of sks person" \
+  --resolution=512 \
+  --train_batch_size=2 \
+  --gradient_accumulation_steps=1 \
+  --learning_rate=5e-7 \
+  --lr_scheduler="constant" \
+  --lr_warmup_steps=0 \
+  --num_class_images=200 \
+  --max_train_steps=1000 \
+  --checkpointing_steps=500 \
+  --center_crop \
+  --mixed_precision=bf16 \
+  --prior_generation_precision=bf16 \
+  --sample_batch_size=8
+```
+
 Inference: generates examples with multiple-prompts
 ```
 # Stable Diffusion family (default)
@@ -147,6 +193,16 @@ python infer.py --model_family flux --model_path <path to FLUX model> --output_d
 Flux example script:
 ```
 bash scripts/infer_flux.sh
+```
+
+Quick run (copy/paste):
+```bash
+python infer.py \
+  --model_family flux \
+  --model_path <path to FLUX model> \
+  --output_dir ./test-infer-flux/ \
+  --num_inference_steps 50 \
+  --guidance_scale 3.5
 ```
 
 ## Contacts
