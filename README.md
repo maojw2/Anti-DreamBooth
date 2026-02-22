@@ -135,11 +135,6 @@ If you want to train a DreamBooth model from your own data, whether it is clean 
 bash scripts/train_dreambooth_alone.sh
 ```
 
-FLUX Anti-DreamBooth shortest runnable command (generate ASPL perturbations, then train FLUX LoRA on them):
-```bash
-bash scripts/attack_with_flux_aspl.sh
-```
-
 FLUX DreamBooth LoRA training program (wrapper around the official diffusers FLUX trainer):
 ```bash
 bash scripts/train_flux_dreambooth_lora.sh
@@ -148,21 +143,11 @@ bash scripts/train_flux_dreambooth_lora.sh
 Or run it directly:
 ```bash
 python train_flux_dreambooth_lora.py \
-  --train_script third_party/diffusers/examples/dreambooth/train_dreambooth_lora_flux.py \
-  --download_missing_script \
+  --train_script diffusers/examples/dreambooth/train_dreambooth_lora_flux.py \
   --pretrained_model_name_or_path stable-diffusion/flux-dev \
   --instance_data_dir data/n000050/ \
   --output_dir flux-dreambooth-outputs/n000050/ \
   --instance_prompt "a photo of sks person"
-```
-
-If you see `Cannot find train_dreambooth_lora_flux.py`, either:
-```bash
-# Option A: one-time auto download
-python train_flux_dreambooth_lora.py ... --download_missing_script
-
-# Option B: clone diffusers locally
-git clone https://github.com/huggingface/diffusers.git third_party/diffusers
 ```
 
 > Note: `train_flux_dreambooth_lora.py` launches the upstream script `train_dreambooth_lora_flux.py` via `accelerate`.
