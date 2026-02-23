@@ -109,9 +109,40 @@ def encode_flux_prompt(pipe: DiffusionPipeline, prompt: str, batch_size: int, de
     )
 
     # Common FLUX return: (prompt_embeds, pooled_prompt_embeds, text_ids)
+    # but order can differ across versions.
     if isinstance(encoded, tuple):
         if len(encoded) >= 3:
-            return encoded[0], encoded[1], encoded[2]
+            prompt_embeds = None
+            pooled_prompt_embeds = None
+            text_ids = None
+
+            for item in encoded:
+                if not torch.is_tensor(item):
+                    continue
+
+                # Prompt embeds are usually 3D floating tensors [B, T, D].
+                if item.ndim >= 3 and torch.is_floating_point(item) and prompt_embeds is None:
+                    prompt_embeds = item
+                    continue
+
+                # Pooled projection is usually 2D floating tensor [B, D].
+                if item.ndim == 2 and torch.is_floating_point(item) and pooled_prompt_embeds is None:
+                    pooled_prompt_embeds = item
+                    continue
+
+                # text ids are typically integer tensors.
+                if not torch.is_floating_point(item) and text_ids is None:
+                    text_ids = item
+
+            # Fallback to positional assumptions if still missing.
+            if prompt_embeds is None:
+                prompt_embeds = encoded[0]
+            if pooled_prompt_embeds is None:
+                pooled_prompt_embeds = encoded[1]
+            if text_ids is None and len(encoded) > 2:
+                text_ids = encoded[2]
+
+            return prompt_embeds, pooled_prompt_embeds, text_ids
         if len(encoded) == 2:
             return encoded[0], encoded[1], None
         if len(encoded) == 1:
