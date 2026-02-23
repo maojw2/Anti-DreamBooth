@@ -142,6 +142,11 @@ def encode_flux_prompt(pipe: DiffusionPipeline, prompt: str, batch_size: int, de
             if text_ids is None and len(encoded) > 2:
                 text_ids = encoded[2]
 
+            if pooled_prompt_embeds is None and torch.is_tensor(prompt_embeds) and prompt_embeds.ndim >= 3:
+                # Some variants don't return pooled projection explicitly.
+                # Use mean pooling as a safe fallback to satisfy transformer conditioning input.
+                pooled_prompt_embeds = prompt_embeds.mean(dim=1)
+
             return prompt_embeds, pooled_prompt_embeds, text_ids
         if len(encoded) == 2:
             return encoded[0], encoded[1], None
@@ -163,12 +168,18 @@ def encode_flux_prompt(pipe: DiffusionPipeline, prompt: str, batch_size: int, de
         if text_ids is None:
             text_ids = encoded.get("txt_ids")
 
+        if pooled_prompt_embeds is None and torch.is_tensor(prompt_embeds) and prompt_embeds.ndim >= 3:
+            pooled_prompt_embeds = prompt_embeds.mean(dim=1)
+
         return (prompt_embeds, pooled_prompt_embeds, text_ids)
 
     raise RuntimeError("Unsupported return format from `encode_prompt`.")
 
 
 def call_flux_transformer(transformer, noisy_latents, timesteps, prompt_embeds, pooled_prompt_embeds, text_ids):
+    if pooled_prompt_embeds is None and torch.is_tensor(prompt_embeds) and prompt_embeds.ndim >= 3:
+        pooled_prompt_embeds = prompt_embeds.mean(dim=1)
+
     out = _call_with_supported_kwargs(
         transformer.forward,
         {
