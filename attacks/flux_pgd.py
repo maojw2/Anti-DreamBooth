@@ -138,7 +138,21 @@ def prepare_flux_hidden_and_img_ids(pipe: DiffusionPipeline, latents: torch.Tens
             },
         )
 
-    return hidden_states, img_ids
+    image_rotary_emb = None
+    if hasattr(pipe, "_prepare_rotary_positional_embeddings"):
+        image_rotary_emb = _call_with_supported_kwargs(
+            pipe._prepare_rotary_positional_embeddings,
+            {
+                "height": latents.shape[-2],
+                "width": latents.shape[-1],
+                "batch_size": latents.shape[0],
+                "num_channels_latents": latents.shape[1],
+                "device": latents.device,
+                "dtype": latents.dtype,
+            },
+        )
+
+    return hidden_states, img_ids, image_rotary_emb
 
 
 def encode_flux_prompt(pipe: DiffusionPipeline, prompt: str, batch_size: int, device: torch.device):
@@ -233,6 +247,7 @@ def call_flux_transformer(
     text_ids,
     guidance_scale: float,
     img_ids_override=None,
+    image_rotary_emb_override=None,
 ):
     if pooled_prompt_embeds is None and torch.is_tensor(prompt_embeds) and prompt_embeds.ndim >= 3:
         pooled_prompt_embeds = prompt_embeds.mean(dim=1)
@@ -240,12 +255,12 @@ def call_flux_transformer(
     sig = inspect.signature(transformer.forward)
 
     # FLUX variants may require txt_ids/img_ids for RoPE indexing.
-    # Build safe fallbacks if missing.
-    if text_ids is None and ("txt_ids" in sig.parameters or "text_ids" in sig.parameters):
+    # If image_rotary_emb is provided directly, ids are optional and often unnecessary.
+    if image_rotary_emb_override is None and text_ids is None and ("txt_ids" in sig.parameters or "text_ids" in sig.parameters):
         text_ids = torch.zeros((timesteps.shape[0], 1, 3), device=noisy_latents.device, dtype=torch.long)
 
     img_ids = img_ids_override
-    if img_ids is None and "img_ids" in sig.parameters:
+    if image_rotary_emb_override is None and img_ids is None and "img_ids" in sig.parameters:
         if noisy_latents.ndim >= 3:
             img_tokens = noisy_latents.shape[1] if noisy_latents.ndim == 3 else noisy_latents.shape[-2] * noisy_latents.shape[-1]
         else:
@@ -272,7 +287,7 @@ def call_flux_transformer(
     if torch.is_tensor(img_ids) and img_ids.ndim == 1:
         img_ids = img_ids.unsqueeze(-1)
 
-    if torch.is_tensor(text_ids) and torch.is_tensor(img_ids):
+    if image_rotary_emb_override is None and torch.is_tensor(text_ids) and torch.is_tensor(img_ids):
         # Align id dimension.
         txt_dim = text_ids.shape[-1]
         img_dim = img_ids.shape[-1]
@@ -318,6 +333,7 @@ def call_flux_transformer(
             "txt_ids": text_ids,
             "text_ids": text_ids,
             "img_ids": img_ids,
+            "image_rotary_emb": image_rotary_emb_override,
             "guidance": guidance,
         },
     )
@@ -427,7 +443,9 @@ def main() -> None:
             timesteps = torch.randint(1, max_t, (latents.shape[0],), device=device).long()
 
             noisy_latents = add_noise_with_fallback(pipe.scheduler, latents, noise, timesteps)
-            transformer_hidden, transformer_img_ids = prepare_flux_hidden_and_img_ids(pipe, noisy_latents)
+            transformer_hidden, transformer_img_ids, transformer_image_rotary_emb = prepare_flux_hidden_and_img_ids(
+                pipe, noisy_latents
+            )
 
             pred = call_flux_transformer(
                 pipe.transformer,
@@ -438,6 +456,7 @@ def main() -> None:
                 text_ids,
                 args.guidance_scale,
                 img_ids_override=transformer_img_ids,
+                image_rotary_emb_override=transformer_image_rotary_emb,
             )
 
             loss = -F.mse_loss(pred.float(), noise.float(), reduction="mean")
@@ -451,7 +470,7 @@ def main() -> None:
 
             print(f"step={step:04d} inner_loss={loss.detach().item():.6f}")
 
-            del adv_batch, latents, noise, noisy_latents, transformer_hidden, transformer_img_ids, pred, loss
+            del adv_batch, latents, noise, noisy_latents, transformer_hidden, transformer_img_ids, transformer_image_rotary_emb, pred, loss
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
@@ -467,4 +486,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
