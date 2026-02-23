@@ -301,7 +301,8 @@ def call_flux_transformer(
                     )
 
     guidance = None
-    if "guidance" in sig.parameters:
+    guidance_required = bool(getattr(getattr(transformer, "config", None), "guidance_embeds", False))
+    if "guidance" in sig.parameters and guidance_required:
         # Some FLUX variants require a guidance tensor in forward;
         # if omitted, internal time-text embedding can fail with missing pooled_projection.
         guidance = torch.full(
