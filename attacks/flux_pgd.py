@@ -260,6 +260,46 @@ def call_flux_transformer(
 
         img_ids = torch.zeros((timesteps.shape[0], img_tokens, id_last_dim), device=noisy_latents.device, dtype=id_dtype)
 
+    # Normalize txt/img ids shapes for concatenation inside transformer:
+    # expected layout is [batch, seq_len, id_dim] with matching id_dim.
+    if torch.is_tensor(text_ids) and text_ids.ndim == 2:
+        text_ids = text_ids.unsqueeze(-1)
+    if torch.is_tensor(img_ids) and img_ids.ndim == 2:
+        img_ids = img_ids.unsqueeze(-1)
+
+    if torch.is_tensor(text_ids) and torch.is_tensor(img_ids):
+        if text_ids.ndim == 3 and img_ids.ndim == 3:
+            bsz = timesteps.shape[0]
+
+            if text_ids.shape[0] != bsz:
+                if text_ids.shape[0] == 1:
+                    text_ids = text_ids.expand(bsz, -1, -1)
+                else:
+                    text_ids = text_ids[:bsz]
+
+            if img_ids.shape[0] != bsz:
+                if img_ids.shape[0] == 1:
+                    img_ids = img_ids.expand(bsz, -1, -1)
+                else:
+                    img_ids = img_ids[:bsz]
+
+            txt_dim = text_ids.shape[-1]
+            img_dim = img_ids.shape[-1]
+            if txt_dim != img_dim:
+                target_dim = max(txt_dim, img_dim)
+                if txt_dim < target_dim:
+                    pad = target_dim - txt_dim
+                    text_ids = torch.cat(
+                        [text_ids, torch.zeros((*text_ids.shape[:-1], pad), device=text_ids.device, dtype=text_ids.dtype)],
+                        dim=-1,
+                    )
+                if img_dim < target_dim:
+                    pad = target_dim - img_dim
+                    img_ids = torch.cat(
+                        [img_ids, torch.zeros((*img_ids.shape[:-1], pad), device=img_ids.device, dtype=img_ids.dtype)],
+                        dim=-1,
+                    )
+
     guidance = None
     if "guidance" in sig.parameters:
         # Some FLUX variants require a guidance tensor in forward;
@@ -435,4 +475,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
