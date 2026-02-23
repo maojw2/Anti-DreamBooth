@@ -341,25 +341,67 @@ def call_flux_transformer(
             device=noisy_latents.device,
         )
 
-    out = _call_with_supported_kwargs(
-        transformer.forward,
+    base_kwargs = {
+        "hidden_states": noisy_latents,
+        "sample": noisy_latents,
+        "timestep": timesteps,
+        "timesteps": timesteps,
+        "encoder_hidden_states": prompt_embeds,
+        "prompt_embeds": prompt_embeds,
+        "pooled_projections": pooled_prompt_embeds,
+        "pooled_projection": pooled_prompt_embeds,
+        "pooled_prompt_embeds": pooled_prompt_embeds,
+        "txt_ids": text_ids,
+        "text_ids": text_ids,
+        "img_ids": img_ids,
+        "image_rotary_emb": image_rotary_emb_override,
+        "guidance": guidance,
+    }
+
+    call_variants = [
+        base_kwargs,
+        {**base_kwargs, "image_rotary_emb": None},
         {
-            "hidden_states": noisy_latents,
-            "sample": noisy_latents,
-            "timestep": timesteps,
-            "timesteps": timesteps,
-            "encoder_hidden_states": prompt_embeds,
-            "prompt_embeds": prompt_embeds,
-            "pooled_projections": pooled_prompt_embeds,
-            "pooled_projection": pooled_prompt_embeds,
-            "pooled_prompt_embeds": pooled_prompt_embeds,
-            "txt_ids": text_ids,
-            "text_ids": text_ids,
-            "img_ids": img_ids,
-            "image_rotary_emb": image_rotary_emb_override,
-            "guidance": guidance,
+            **base_kwargs,
+            "image_rotary_emb": None,
+            "txt_ids": None,
+            "text_ids": None,
+            "img_ids": None,
         },
-    )
+    ]
+
+    last_error = None
+    out = None
+    for kwargs in call_variants:
+        try:
+            out = _call_with_supported_kwargs(transformer.forward, kwargs)
+            last_error = None
+            break
+        except RuntimeError as e:
+            err = str(e)
+            recoverable = (
+                "apply_rotary_emb" in err
+                or "Sizes of tensors must match" in err
+                or "size of tensor a" in err
+            )
+            if recoverable:
+                last_error = e
+                continue
+            raise
+        except TypeError as e:
+            err = str(e)
+            recoverable = (
+                "pooled_projection" in err
+                or "positional argument" in err
+                or "missing" in err
+            )
+            if recoverable:
+                last_error = e
+                continue
+            raise
+
+    if out is None:
+        raise RuntimeError(f"FLUX transformer forward failed across fallback variants: {last_error}")
 
     if hasattr(out, "sample"):
         return out.sample
