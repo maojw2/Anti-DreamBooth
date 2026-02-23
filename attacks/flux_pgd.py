@@ -358,9 +358,23 @@ def call_flux_transformer(
         "guidance": guidance,
     }
 
+    minimal_kwargs = {
+        "hidden_states": noisy_latents,
+        "sample": noisy_latents,
+        "timestep": timesteps,
+        "timesteps": timesteps,
+        "encoder_hidden_states": prompt_embeds,
+        "prompt_embeds": prompt_embeds,
+        "pooled_projections": pooled_prompt_embeds,
+        "pooled_projection": pooled_prompt_embeds,
+        "pooled_prompt_embeds": pooled_prompt_embeds,
+        "guidance": guidance,
+    }
+
     call_variants = [
         base_kwargs,
         {**base_kwargs, "image_rotary_emb": None},
+        minimal_kwargs,
     ]
 
     # Never pass None ids to FLUX variants that unconditionally access txt_ids/img_ids.
@@ -407,6 +421,17 @@ def call_flux_transformer(
                 "pooled_projection" in err
                 or "positional argument" in err
                 or "missing" in err
+            )
+            if recoverable:
+                last_error = e
+                continue
+            raise
+        except AttributeError as e:
+            err = str(e)
+            recoverable = (
+                "txt_ids" in err
+                or "img_ids" in err
+                or "NoneType" in err
             )
             if recoverable:
                 last_error = e
