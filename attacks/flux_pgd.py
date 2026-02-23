@@ -194,8 +194,30 @@ def call_flux_transformer(
     if pooled_prompt_embeds is None and torch.is_tensor(prompt_embeds) and prompt_embeds.ndim >= 3:
         pooled_prompt_embeds = prompt_embeds.mean(dim=1)
 
-    guidance = None
     sig = inspect.signature(transformer.forward)
+
+    # FLUX variants may require txt_ids/img_ids for RoPE indexing.
+    # Build safe fallbacks if missing.
+    if text_ids is None and ("txt_ids" in sig.parameters or "text_ids" in sig.parameters):
+        text_ids = torch.zeros((timesteps.shape[0], 1, 3), device=noisy_latents.device, dtype=torch.long)
+
+    img_ids = None
+    if "img_ids" in sig.parameters:
+        if noisy_latents.ndim >= 3:
+            img_tokens = noisy_latents.shape[1] if noisy_latents.ndim == 3 else noisy_latents.shape[-2] * noisy_latents.shape[-1]
+        else:
+            img_tokens = 1
+
+        id_last_dim = 3
+        id_dtype = torch.long
+        if torch.is_tensor(text_ids):
+            id_dtype = text_ids.dtype
+            if text_ids.ndim >= 3:
+                id_last_dim = text_ids.shape[-1]
+
+        img_ids = torch.zeros((timesteps.shape[0], img_tokens, id_last_dim), device=noisy_latents.device, dtype=id_dtype)
+
+    guidance = None
     if "guidance" in sig.parameters:
         # Some FLUX variants require a guidance tensor in forward;
         # if omitted, internal time-text embedding can fail with missing pooled_projection.
@@ -220,6 +242,7 @@ def call_flux_transformer(
             "pooled_prompt_embeds": pooled_prompt_embeds,
             "txt_ids": text_ids,
             "text_ids": text_ids,
+            "img_ids": img_ids,
             "guidance": guidance,
         },
     )
@@ -357,3 +380,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
