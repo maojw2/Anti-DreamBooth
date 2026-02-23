@@ -118,11 +118,21 @@ def encode_flux_prompt(pipe: DiffusionPipeline, prompt: str, batch_size: int, de
             return encoded[0], None, None
 
     if isinstance(encoded, dict):
-        return (
-            encoded.get("prompt_embeds") or encoded.get("encoder_hidden_states"),
-            encoded.get("pooled_prompt_embeds") or encoded.get("pooled_projections"),
-            encoded.get("text_ids") or encoded.get("txt_ids"),
-        )
+        prompt_embeds = encoded.get("prompt_embeds")
+        if prompt_embeds is None:
+            prompt_embeds = encoded.get("encoder_hidden_states")
+
+        pooled_prompt_embeds = encoded.get("pooled_prompt_embeds")
+        if pooled_prompt_embeds is None:
+            pooled_prompt_embeds = encoded.get("pooled_projections")
+        if pooled_prompt_embeds is None:
+            pooled_prompt_embeds = encoded.get("pooled_projection")
+
+        text_ids = encoded.get("text_ids")
+        if text_ids is None:
+            text_ids = encoded.get("txt_ids")
+
+        return (prompt_embeds, pooled_prompt_embeds, text_ids)
 
     raise RuntimeError("Unsupported return format from `encode_prompt`.")
 
@@ -138,6 +148,7 @@ def call_flux_transformer(transformer, noisy_latents, timesteps, prompt_embeds, 
             "encoder_hidden_states": prompt_embeds,
             "prompt_embeds": prompt_embeds,
             "pooled_projections": pooled_prompt_embeds,
+            "pooled_projection": pooled_prompt_embeds,
             "pooled_prompt_embeds": pooled_prompt_embeds,
             "txt_ids": text_ids,
             "text_ids": text_ids,
