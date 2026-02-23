@@ -103,38 +103,6 @@ def call_flux_transformer(transformer, noisy_latents, timesteps, prompt_embeds, 
     return out
 
 
-def add_noise_with_fallback(scheduler, latents: torch.Tensor, noise: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
-    """
-    Add noise across scheduler variants.
-
-    Priority:
-    1) `scheduler.add_noise(...)` (DDPM-style schedulers)
-    2) `scheduler.scale_noise(...)` (flow-matching schedulers)
-    3) sigma-mix fallback using `scheduler.sigmas` when available
-    """
-    if hasattr(scheduler, "add_noise"):
-        return scheduler.add_noise(latents, noise, timesteps)
-
-    if hasattr(scheduler, "scale_noise"):
-        try:
-            return scheduler.scale_noise(latents, timesteps, noise)
-        except TypeError:
-            try:
-                return scheduler.scale_noise(latents, noise, timesteps)
-            except TypeError:
-                return scheduler.scale_noise(latents, timesteps)
-
-    if hasattr(scheduler, "sigmas"):
-        sigmas = scheduler.sigmas.to(device=latents.device, dtype=latents.dtype)
-        t = timesteps.clamp(min=0, max=len(sigmas) - 1)
-        sigma = sigmas[t].view(-1, 1, 1, 1)
-        return (1.0 - sigma) * latents + sigma * noise
-
-    raise RuntimeError(
-        "Scheduler has neither `add_noise` nor `scale_noise`, and no `sigmas` for fallback mixing."
-    )
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Direct FLUX PGD attack for Anti-DreamBooth-style image perturbation.")
     parser.add_argument("--pretrained_model_name_or_path", type=str, required=True)
@@ -202,7 +170,10 @@ def main():
                 max_t = 1000
             timesteps = torch.randint(1, max_t, (latents.shape[0],), device=device).long()
 
-            noisy = add_noise_with_fallback(pipe.scheduler, latents, noise, timesteps)
+            if not hasattr(pipe.scheduler, "add_noise"):
+                raise RuntimeError("Current FLUX scheduler has no `add_noise` method; unsupported for this attack.")
+
+            noisy = pipe.scheduler.add_noise(latents, noise, timesteps)
 
             pred = call_flux_transformer(
                 pipe.transformer,

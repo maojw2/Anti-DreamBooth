@@ -7,11 +7,7 @@ export OUTPUT_DIR="outputs/$EXPERIMENT_NAME/n000050_ADVERSARIAL"
 mkdir -p "$OUTPUT_DIR"
 cp -r "$CLEAN_ADV_DIR" "$OUTPUT_DIR/image_before_adding_noise"
 
-accelerate launch \
-  --num_processes 1 \
-  --num_machines 1 \
-  --dynamo_backend no \
-  attacks/flux_pgd.py \
+accelerate launch attacks/flux_pgd.py \
   --pretrained_model_name_or_path="$FLUX_MODEL_PATH" \
   --instance_data_dir_for_adversarial="$CLEAN_ADV_DIR" \
   --instance_prompt="a photo of sks person" \
