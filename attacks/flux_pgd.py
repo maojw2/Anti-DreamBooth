@@ -11,6 +11,28 @@ from PIL import Image
 from torchvision import transforms
 
 
+def resolve_flux_pipeline_class():
+    """
+    Resolve FluxPipeline class across diffusers versions.
+
+    - Newer versions may expose `FluxPipeline` at top-level `diffusers`.
+    - Some versions only provide it in `diffusers.pipelines.flux.pipeline_flux`.
+    """
+    try:
+        from diffusers import FluxPipeline  # type: ignore
+
+        return FluxPipeline
+    except Exception:
+        pass
+
+    try:
+        from diffusers.pipelines.flux.pipeline_flux import FluxPipeline  # type: ignore
+
+        return FluxPipeline
+    except Exception:
+        return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Direct FLUX PGD attack for Anti-DreamBooth-style image perturbation."
@@ -175,7 +197,16 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    pipe = DiffusionPipeline.from_pretrained(
+    flux_pipeline_cls = resolve_flux_pipeline_class()
+    if flux_pipeline_cls is None:
+        raise RuntimeError(
+            "Your installed diffusers version does not provide FLUX support (`FluxPipeline`). "
+            "Please upgrade diffusers to a version that includes FLUX pipelines, e.g.\n"
+            "  pip install -U 'diffusers>=0.30.0' transformers accelerate\n"
+            "Then rerun this script."
+        )
+
+    pipe = flux_pipeline_cls.from_pretrained(
         args.pretrained_model_name_or_path,
         torch_dtype=dtype,
         local_files_only=args.local_files_only,
@@ -206,7 +237,10 @@ def main() -> None:
             latents = latents * getattr(pipe.vae.config, "scaling_factor", 1.0)
 
             noise = torch.randn_like(latents)
-            max_t = getattr(getattr(pipe.scheduler, "config", {}), "num_train_timesteps", 1000)
+            if hasattr(pipe.scheduler, "config") and hasattr(pipe.scheduler.config, "num_train_timesteps"):
+                max_t = pipe.scheduler.config.num_train_timesteps
+            else:
+                max_t = 1000
             timesteps = torch.randint(1, max_t, (latents.shape[0],), device=device).long()
 
             noisy_latents = add_noise_with_fallback(pipe.scheduler, latents, noise, timesteps)
