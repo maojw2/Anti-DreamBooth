@@ -190,6 +190,13 @@ python infer.py --model_family sd --model_path <path to DREAMBOOTH model>/checkp
 python infer.py --model_family flux --model_path <path to FLUX model> --output_dir ./test-infer-flux/ --num_inference_steps 50 --guidance_scale 3.5
 ```
 
+
+Direct FLUX-based attack (without using SD surrogate) example:
+```bash
+bash scripts/attack_with_flux_pgd.sh
+```
+This runs `attacks/flux_pgd.py` to optimize pixel-space perturbations directly against a FLUX denoiser objective.
+
 Flux example script:
 ```
 bash scripts/infer_flux.sh
