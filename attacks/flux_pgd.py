@@ -254,6 +254,29 @@ def call_flux_transformer(
 
     sig = inspect.signature(transformer.forward)
 
+    # Guard against mismatched rotary embeddings from helper APIs across versions.
+    if image_rotary_emb_override is not None and torch.is_tensor(noisy_latents) and noisy_latents.ndim >= 2:
+        seq_len = noisy_latents.shape[1]
+
+        def _rotary_matches_seq(rotary_obj, target_seq: int) -> bool:
+            tensors = []
+            if torch.is_tensor(rotary_obj):
+                tensors = [rotary_obj]
+            elif isinstance(rotary_obj, (tuple, list)):
+                tensors = [x for x in rotary_obj if torch.is_tensor(x)]
+
+            if not tensors:
+                return True
+
+            for t in tensors:
+                # Accept if target sequence appears in any non-trailing dimension.
+                if target_seq in t.shape[:-1]:
+                    return True
+            return False
+
+        if not _rotary_matches_seq(image_rotary_emb_override, seq_len):
+            image_rotary_emb_override = None
+
     # FLUX variants may require txt_ids/img_ids for RoPE indexing.
     # If image_rotary_emb is provided directly, ids are optional and often unnecessary.
     if image_rotary_emb_override is None and text_ids is None and ("txt_ids" in sig.parameters or "text_ids" in sig.parameters):
