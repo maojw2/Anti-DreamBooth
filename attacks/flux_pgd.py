@@ -99,6 +99,42 @@ def _call_with_supported_kwargs(fn: Any, kwargs: dict[str, Any]):
     return fn(**filtered)
 
 
+def prepare_flux_hidden_and_img_ids(pipe: DiffusionPipeline, latents: torch.Tensor):
+    """
+    Prepare transformer hidden states / image ids across FLUX pipeline variants.
+    """
+    hidden_states = latents
+    img_ids = None
+
+    if hasattr(pipe, "_pack_latents"):
+        hidden_states = _call_with_supported_kwargs(
+            pipe._pack_latents,
+            {
+                "latents": latents,
+                "batch_size": latents.shape[0],
+                "num_channels_latents": latents.shape[1],
+                "height": latents.shape[-2],
+                "width": latents.shape[-1],
+            },
+        )
+
+    if hasattr(pipe, "_prepare_latent_image_ids"):
+        h = latents.shape[-2]
+        w = latents.shape[-1]
+        img_ids = _call_with_supported_kwargs(
+            pipe._prepare_latent_image_ids,
+            {
+                "batch_size": latents.shape[0],
+                "height": h,
+                "width": w,
+                "device": latents.device,
+                "dtype": latents.dtype,
+            },
+        )
+
+    return hidden_states, img_ids
+
+
 def encode_flux_prompt(pipe: DiffusionPipeline, prompt: str, batch_size: int, device: torch.device):
     if not hasattr(pipe, "encode_prompt"):
         raise RuntimeError("Loaded pipeline does not support `encode_prompt`, cannot run FLUX attack.")
@@ -190,6 +226,7 @@ def call_flux_transformer(
     pooled_prompt_embeds,
     text_ids,
     guidance_scale: float,
+    img_ids_override=None,
 ):
     if pooled_prompt_embeds is None and torch.is_tensor(prompt_embeds) and prompt_embeds.ndim >= 3:
         pooled_prompt_embeds = prompt_embeds.mean(dim=1)
@@ -201,8 +238,8 @@ def call_flux_transformer(
     if text_ids is None and ("txt_ids" in sig.parameters or "text_ids" in sig.parameters):
         text_ids = torch.zeros((timesteps.shape[0], 1, 3), device=noisy_latents.device, dtype=torch.long)
 
-    img_ids = None
-    if "img_ids" in sig.parameters:
+    img_ids = img_ids_override
+    if img_ids is None and "img_ids" in sig.parameters:
         if noisy_latents.ndim >= 3:
             img_tokens = noisy_latents.shape[1] if noisy_latents.ndim == 3 else noisy_latents.shape[-2] * noisy_latents.shape[-1]
         else:
@@ -347,15 +384,17 @@ def main() -> None:
             timesteps = torch.randint(1, max_t, (latents.shape[0],), device=device).long()
 
             noisy_latents = add_noise_with_fallback(pipe.scheduler, latents, noise, timesteps)
+            transformer_hidden, transformer_img_ids = prepare_flux_hidden_and_img_ids(pipe, noisy_latents)
 
             pred = call_flux_transformer(
                 pipe.transformer,
-                noisy_latents,
+                transformer_hidden,
                 timesteps,
                 prompt_embeds,
                 pooled_prompt_embeds,
                 text_ids,
                 args.guidance_scale,
+                img_ids_override=transformer_img_ids,
             )
 
             loss = -F.mse_loss(pred.float(), noise.float(), reduction="mean")
@@ -380,4 +419,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
