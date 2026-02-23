@@ -361,14 +361,27 @@ def call_flux_transformer(
     call_variants = [
         base_kwargs,
         {**base_kwargs, "image_rotary_emb": None},
-        {
-            **base_kwargs,
-            "image_rotary_emb": None,
-            "txt_ids": None,
-            "text_ids": None,
-            "img_ids": None,
-        },
     ]
+
+    # Never pass None ids to FLUX variants that unconditionally access txt_ids/img_ids.
+    if ("txt_ids" in sig.parameters or "text_ids" in sig.parameters or "img_ids" in sig.parameters):
+        safe_text_ids = text_ids
+        if safe_text_ids is None:
+            safe_text_ids = torch.zeros((1, 3), device=noisy_latents.device, dtype=torch.long)
+
+        safe_img_ids = img_ids
+        if safe_img_ids is None:
+            safe_img_ids = torch.zeros((noisy_latents.shape[1], 3), device=noisy_latents.device, dtype=torch.long)
+
+        call_variants.append(
+            {
+                **base_kwargs,
+                "image_rotary_emb": None,
+                "txt_ids": safe_text_ids,
+                "text_ids": safe_text_ids,
+                "img_ids": safe_img_ids,
+            }
+        )
 
     last_error = None
     out = None
