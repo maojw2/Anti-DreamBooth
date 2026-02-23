@@ -49,6 +49,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pgd_alpha", type=float, default=5e-3)
     parser.add_argument("--pgd_eps", type=float, default=5e-2)
     parser.add_argument("--mixed_precision", type=str, default="bf16", choices=["fp16", "bf16", "fp32"])
+    parser.add_argument(
+        "--guidance_scale",
+        type=float,
+        default=3.5,
+        help="Guidance value used when the FLUX transformer forward expects `guidance`.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--local_files_only",
@@ -176,9 +182,29 @@ def encode_flux_prompt(pipe: DiffusionPipeline, prompt: str, batch_size: int, de
     raise RuntimeError("Unsupported return format from `encode_prompt`.")
 
 
-def call_flux_transformer(transformer, noisy_latents, timesteps, prompt_embeds, pooled_prompt_embeds, text_ids):
+def call_flux_transformer(
+    transformer,
+    noisy_latents,
+    timesteps,
+    prompt_embeds,
+    pooled_prompt_embeds,
+    text_ids,
+    guidance_scale: float,
+):
     if pooled_prompt_embeds is None and torch.is_tensor(prompt_embeds) and prompt_embeds.ndim >= 3:
         pooled_prompt_embeds = prompt_embeds.mean(dim=1)
+
+    guidance = None
+    sig = inspect.signature(transformer.forward)
+    if "guidance" in sig.parameters:
+        # Some FLUX variants require a guidance tensor in forward;
+        # if omitted, internal time-text embedding can fail with missing pooled_projection.
+        guidance = torch.full(
+            (timesteps.shape[0],),
+            float(guidance_scale),
+            dtype=noisy_latents.dtype,
+            device=noisy_latents.device,
+        )
 
     out = _call_with_supported_kwargs(
         transformer.forward,
@@ -194,6 +220,7 @@ def call_flux_transformer(transformer, noisy_latents, timesteps, prompt_embeds, 
             "pooled_prompt_embeds": pooled_prompt_embeds,
             "txt_ids": text_ids,
             "text_ids": text_ids,
+            "guidance": guidance,
         },
     )
 
@@ -305,6 +332,7 @@ def main() -> None:
                 prompt_embeds,
                 pooled_prompt_embeds,
                 text_ids,
+                args.guidance_scale,
             )
 
             loss = -F.mse_loss(pred.float(), noise.float(), reduction="mean")
