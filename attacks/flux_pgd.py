@@ -280,38 +280,49 @@ def call_flux_transformer(
     # FLUX variants may require txt_ids/img_ids for RoPE indexing.
     # If image_rotary_emb is provided directly, ids are optional and often unnecessary.
     if image_rotary_emb_override is None and text_ids is None and ("txt_ids" in sig.parameters or "text_ids" in sig.parameters):
-        text_ids = torch.zeros((timesteps.shape[0], 1, 3), device=noisy_latents.device, dtype=torch.long)
+        # FLUX transformer expects 2D [seq_len, 3] (no batch dim)
+        text_ids = torch.zeros((1, 3), device=noisy_latents.device, dtype=torch.long)
 
     img_ids = img_ids_override
+    # Strip batch dim from img_ids if it came in as [B, seq, 3]
+    if torch.is_tensor(img_ids) and img_ids.ndim == 3:
+        img_ids = img_ids[0]
+
     if image_rotary_emb_override is None and img_ids is None and "img_ids" in sig.parameters:
-        if noisy_latents.ndim >= 3:
-            img_tokens = noisy_latents.shape[1] if noisy_latents.ndim == 3 else noisy_latents.shape[-2] * noisy_latents.shape[-1]
+        # Compute number of image tokens after packing.
+        # noisy_latents is packed: [B, H/2*W/2, C] (3D) or unpacked: [B, C, H, W] (4D)
+        if noisy_latents.ndim == 3:
+            img_tokens = noisy_latents.shape[1]
+        elif noisy_latents.ndim == 4:
+            img_tokens = (noisy_latents.shape[-2] // 2) * (noisy_latents.shape[-1] // 2)
         else:
             img_tokens = 1
 
         id_last_dim = 3
         id_dtype = torch.long
-        if torch.is_tensor(text_ids):
+        if torch.is_tensor(text_ids) and text_ids.ndim >= 2:
             id_dtype = text_ids.dtype
-            if text_ids.ndim >= 3:
-                id_last_dim = text_ids.shape[-1]
+            id_last_dim = text_ids.shape[-1]
 
-        img_ids = torch.zeros((timesteps.shape[0], img_tokens, id_last_dim), device=noisy_latents.device, dtype=id_dtype)
+        # 2D [seq_len, id_dim] — no batch dimension
+        img_ids = torch.zeros((img_tokens, id_last_dim), device=noisy_latents.device, dtype=id_dtype)
 
     # Normalize txt/img ids for FLUX rotary embedding processors.
-    # Newer diffusers expects 2D ids: [seq_len, id_dim].
+    # FLUX transformer expects 2D ids: [seq_len, id_dim] (no batch dimension).
+    # Strip batch dimension if present (ndim == 3 → take first element).
     if torch.is_tensor(text_ids) and text_ids.ndim == 3:
         text_ids = text_ids[0]
     if torch.is_tensor(img_ids) and img_ids.ndim == 3:
         img_ids = img_ids[0]
 
+    # If somehow collapsed to 1D [id_dim], unsqueeze to [1, id_dim].
     if torch.is_tensor(text_ids) and text_ids.ndim == 1:
-        text_ids = text_ids.unsqueeze(-1)
+        text_ids = text_ids.unsqueeze(0)
     if torch.is_tensor(img_ids) and img_ids.ndim == 1:
-        img_ids = img_ids.unsqueeze(-1)
+        img_ids = img_ids.unsqueeze(0)
 
     if image_rotary_emb_override is None and torch.is_tensor(text_ids) and torch.is_tensor(img_ids):
-        # Align id dimension.
+        # Align last id dimension between txt and img ids.
         txt_dim = text_ids.shape[-1]
         img_dim = img_ids.shape[-1]
         if txt_dim != img_dim:
@@ -382,10 +393,22 @@ def call_flux_transformer(
         safe_text_ids = text_ids
         if safe_text_ids is None:
             safe_text_ids = torch.zeros((1, 3), device=noisy_latents.device, dtype=torch.long)
+        # Ensure 2D [seq_len, id_dim] — strip batch dim if present
+        if torch.is_tensor(safe_text_ids) and safe_text_ids.ndim == 3:
+            safe_text_ids = safe_text_ids[0]
 
         safe_img_ids = img_ids
         if safe_img_ids is None:
-            safe_img_ids = torch.zeros((noisy_latents.shape[1], 3), device=noisy_latents.device, dtype=torch.long)
+            if noisy_latents.ndim == 3:
+                n_img_tokens = noisy_latents.shape[1]
+            elif noisy_latents.ndim == 4:
+                n_img_tokens = (noisy_latents.shape[-2] // 2) * (noisy_latents.shape[-1] // 2)
+            else:
+                n_img_tokens = 1
+            safe_img_ids = torch.zeros((n_img_tokens, 3), device=noisy_latents.device, dtype=torch.long)
+        # Ensure 2D [seq_len, id_dim] — strip batch dim if present
+        if torch.is_tensor(safe_img_ids) and safe_img_ids.ndim == 3:
+            safe_img_ids = safe_img_ids[0]
 
         call_variants.append(
             {
@@ -562,7 +585,28 @@ def main() -> None:
                 image_rotary_emb_override=transformer_image_rotary_emb,
             )
 
-            loss = -F.mse_loss(pred.float(), noise.float(), reduction="mean")
+            # pred may be packed [B, seq, C] while noise is [B, C, H, W]; align shapes.
+            noise_target = noise
+            if pred.shape != noise_target.shape:
+                if pred.ndim == 3 and noise_target.ndim == 4:
+                    # Pack noise the same way the pipeline packs latents
+                    if hasattr(pipe, "_pack_latents"):
+                        noise_target = _call_with_supported_kwargs(
+                            pipe._pack_latents,
+                            {
+                                "latents": noise_target,
+                                "batch_size": noise_target.shape[0],
+                                "num_channels_latents": noise_target.shape[1],
+                                "height": noise_target.shape[-2],
+                                "width": noise_target.shape[-1],
+                            },
+                        )
+                    else:
+                        # Manual pack: [B, C, H, W] -> [B, H/2*W/2, C*4]
+                        b, c, h, w = noise_target.shape
+                        noise_target = noise_target.reshape(b, c, h // 2, 2, w // 2, 2)
+                        noise_target = noise_target.permute(0, 2, 4, 1, 3, 5).reshape(b, (h // 2) * (w // 2), c * 4)
+            loss = -F.mse_loss(pred.float(), noise_target.float(), reduction="mean")
             loss.backward()
 
             with torch.no_grad():
