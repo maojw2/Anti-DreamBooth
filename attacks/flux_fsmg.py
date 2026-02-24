@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--guidance_scale", type=float, default=3.5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--local_files_only", action="store_true")
+    parser.add_argument("--disable_lora_adapters", action="store_true")
     return parser.parse_args()
 
 
@@ -64,6 +65,8 @@ def remap_to_flux_pgd_argv(args: argparse.Namespace) -> list[str]:
         argv.append("--center_crop")
     if args.local_files_only:
         argv.append("--local_files_only")
+    if args.disable_lora_adapters:
+        argv.append("--disable_lora_adapters")
     return argv
 
 

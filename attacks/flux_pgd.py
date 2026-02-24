@@ -67,7 +67,55 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="If set, do not try downloading from Hub when loading the FLUX pipeline.",
     )
+    parser.add_argument(
+        "--disable_lora_adapters",
+        action="store_true",
+        help=(
+            "Disable/unload any LoRA adapters after pipeline loading. "
+            "Useful when a mismatched LoRA causes shape errors between FLUX variants."
+        ),
+    )
     return parser.parse_args()
+
+
+def disable_lora_adapters_if_possible(pipe: DiffusionPipeline) -> list[str]:
+    """
+    Best-effort removal of LoRA/adapters to run the base model only.
+
+    This follows the recommended debugging workflow for dimension mismatch issues:
+    first verify the base FLUX model works without any adapter.
+    """
+    actions: list[str] = []
+
+    if hasattr(pipe, "unload_lora_weights"):
+        pipe.unload_lora_weights()
+        actions.append("pipe.unload_lora_weights")
+
+    if hasattr(pipe, "disable_lora"):
+        pipe.disable_lora()
+        actions.append("pipe.disable_lora")
+
+    if hasattr(pipe, "unfuse_lora"):
+        pipe.unfuse_lora()
+        actions.append("pipe.unfuse_lora")
+
+    if hasattr(pipe, "set_adapters"):
+        pipe.set_adapters([])
+        actions.append("pipe.set_adapters([])")
+
+    if hasattr(pipe, "transformer") and hasattr(pipe.transformer, "disable_lora"):
+        pipe.transformer.disable_lora()
+        actions.append("pipe.transformer.disable_lora")
+
+    if hasattr(pipe, "text_encoder") and hasattr(pipe.text_encoder, "disable_lora"):
+        pipe.text_encoder.disable_lora()
+        actions.append("pipe.text_encoder.disable_lora")
+
+    if hasattr(pipe, "text_encoder_2") and hasattr(pipe.text_encoder_2, "disable_lora"):
+        pipe.text_encoder_2.disable_lora()
+        actions.append("pipe.text_encoder_2.disable_lora")
+
+    return actions
 
 
 @torch.no_grad()
@@ -532,6 +580,13 @@ def main() -> None:
         local_files_only=args.local_files_only,
     )
     pipe.to(device)
+
+    if args.disable_lora_adapters:
+        actions = disable_lora_adapters_if_possible(pipe)
+        if actions:
+            print(f"Disabled adapters/LoRA via: {', '.join(actions)}")
+        else:
+            print("--disable_lora_adapters was set, but no adapter control API was found on this pipeline.")
 
     if not hasattr(pipe, "vae") or not hasattr(pipe, "transformer") or not hasattr(pipe, "scheduler"):
         raise RuntimeError("This script expects a FLUX-like pipeline with `.vae`, `.transformer`, and `.scheduler`.")
